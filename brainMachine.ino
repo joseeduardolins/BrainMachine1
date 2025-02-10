@@ -1,3 +1,8 @@
+
+//#define COMMON_CATHODE
+
+#define COMMON_ANODE
+
 class LedRGB {
 private:
     int pinRed, pinGreen, pinBlue;
@@ -27,17 +32,22 @@ public:
     }
 
     // Função para definir a cor (valores de 0 a 255)
-    void setColor(int r, int g, int b) {
-        redValue =  r;  // Subtrai de 255 para inverter os valores de cor
-        greenValue =  g;
-        blueValue =  b;
-        //redValue = 255 - r;  // Subtrai de 255 para inverter os valores de cor
-       //greenValue = 255 - g;
-        //blueValue = 255 - b;
+    void setColor(int r, int g, int b, float intensity) {
+      #ifdef COMMON_ANODE
+        redValue =  (int)r*intensity;  // Subtrai de 255 para inverter os valores de cor
+        greenValue =  (int)g*intensity;
+        blueValue =  (int)b*intensity;
+        #endif
+        #ifdef COMMON_CATHODE
+        redValue = (int)255 - r + 255*(1-intensity);  // Subtrai de 255 para inverter os valores de cor
+       greenValue = (int)255 - g + 255*(1-intensity);
+        blueValue = (int)255 - b+255*(1-intensity);
+        #endif
     }
 
     // Função para ligar o LED com a cor escolhida
     void turnOn() {
+      
         // Ligar as cores com base nos valores definidos
         analogWrite(pinRed, redValue);   // Valor invertido para o hardware
         analogWrite(pinGreen, greenValue); // Valor invertido para o hardware
@@ -47,12 +57,16 @@ public:
     // Função para desligar o LED
     void turnOff() {
         // No caso do hardware invertido, nível alto apaga o LED
+        #ifdef COMMON_ANODE
         analogWrite(pinRed, LOW);
         analogWrite(pinGreen, LOW);
         analogWrite(pinBlue, LOW);
-        //digitalWrite(pinRed, HIGH);
-        //digitalWrite(pinGreen, HIGH);
-        //digitalWrite(pinBlue, HIGH);
+        #endif
+        #ifdef COMMON_CATHODE
+        digitalWrite(pinRed, HIGH);
+        digitalWrite(pinGreen, HIGH);
+        digitalWrite(pinBlue, HIGH);
+        #endif
     }
 	void blinkSquareWaveWithDutyCycle(float freq, float dutyCycle) {
     frequency = freq;
@@ -76,7 +90,7 @@ public:
     }
 }
     // Função para piscar o LED com a onda quadrada
-    void blinkSquareWave(float freq, float intensity) {
+    void blinkSquareWave(float freq) {
         frequency = freq;
         period = 1000.0 / frequency; // Período da onda em milissegundos
         interval = period / 2; // O tempo de "on" e "off" é metade do período
@@ -86,8 +100,7 @@ public:
             previousMillis = currentMillis;
           ledState = !ledState; // Inverte o estado do LED
             if (ledState) {
-                blinkSquareWaveWithDutyCycle(100, 0.5);
-                //turnOn();
+                turnOn();
             } else {
                 turnOff(); // Desliga o LED (nível alto)
             }
@@ -141,10 +154,10 @@ void blinkTriangleWave(float freq) {
 };
 
 // Instancia o LED com os pinos 2, 3 e 4 fora da classe
-LedRGB led(4, 5, 35);
+LedRGB led(4,2,35);
 
 void setup() {
-    led.setColor(0, 0, 255); // Define a cor como verde
+    led.setColor(0,0, 255,0.01); // Define a cor como verde
 }
 
 void loop() {
@@ -154,8 +167,9 @@ void loop() {
     //delay(1000);
     //led.turnOff();
     //delay(1000);
-   //led.blinkSquareWave(0.1, 0.5); // Frequência de 1 Hz para onda quadrada
+   led.blinkSquareWave(2); // Frequência de 1 Hz para onda quadrada
    //led.blinkTriangleWave(1); // Frequência de 1 Hz para onda triangular
-  //led.blinkSineWave(0.3); // Frequência de 1 Hz para onda senoidal
- // led.blinkSquareWaveWithDutyCycle(100, 0.1);
+  //led.blinkSineWave(1); // Frequência de 1 Hz para onda senoidal
+
+
 }

@@ -7,6 +7,8 @@ class LedRGB {
 private:
     int pinRed, pinGreen, pinBlue;
     int redValue, greenValue, blueValue;
+    int redValueCurrent, greenValueCurrent, blueValueCurrent;    //cores com variação de intensidade das funções
+    int redValueWithIntensity, greenValueWithIntensity, blueValueWithIntensity;    //cores com variação de intensidade das funções
     unsigned long previousMillis; // Para controlar o tempo com millis()
     float frequency; // Frequência de piscagem em hertz
     float period; // Período da onda (tempo de um ciclo completo)
@@ -27,21 +29,60 @@ public:
         redValue = 0;
         greenValue = 0;
         blueValue = 0;
+
+        redValueCurrent = 255;
+        greenValueCurrent = 255;
+        blueValueCurrent = 255;
+
+        redValueWithIntensity = 255;
+        greenValueWithIntensity = 255;
+        blueValueWithIntensity = 255;
+
         previousMillis = 0;
         ledState = false;
     }
 
     // Função para definir a cor (valores de 0 a 255)
-    void setColor(int r, int g, int b, float intensity) {
+    void setColor(int r, int g, int b) {
       #ifdef COMMON_ANODE
-        redValue =  (int)r*intensity;  // Subtrai de 255 para inverter os valores de cor
-        greenValue =  (int)g*intensity;
-        blueValue =  (int)b*intensity;
+        redValue =  (int)r;  // Subtrai de 255 para inverter os valores de cor
+        greenValue =  (int)g;
+        blueValue =  (int)b;
         #endif
         #ifdef COMMON_CATHODE
-        redValue = (int)255 - r + 255*(1-intensity);  // Subtrai de 255 para inverter os valores de cor
-       greenValue = (int)255 - g + 255*(1-intensity);
-        blueValue = (int)255 - b+255*(1-intensity);
+        redValue = (int)255 - r ;  // Subtrai de 255 para inverter os valores de cor
+       greenValue = (int)255 - g ;
+        blueValue = (int)255 - b ;
+        #endif
+    }
+
+    //Configura intensidade dos leds 
+    void setIntensity(float intensity)
+    {
+        #ifdef COMMON_ANODE
+        redValueWithIntensity =  (int)redValue*intensity;  // Subtrai de 255 para inverter os valores de cor
+        greenValueWithIntensity =  (int)greenValue*intensity;
+        blueValueWithIntensity =  (int) blueValue*intensity;
+        #endif
+        #ifdef COMMON_CATHODE
+        redValueWithIntensity = (int)255 - redValue + 255*(1-intensity);  // Subtrai de 255 para inverter os valores de cor
+       greenValueWithIntensity = (int)255 - greenValue + 255*(1-intensity);
+        blueValueWithIntensity = (int)255 - blueValue+255*(1-intensity);
+        #endif
+    }
+
+    //altera a intensidade dos leds sem mudar cor RGB
+    void setIntensityCurrent(float intensity)
+    {
+      #ifdef COMMON_ANODE
+        redValueCurrent =  (int)redValueWithIntensity*intensity;  // Subtrai de 255 para inverter os valores de cor
+        greenValueCurrent =  (int)greenValueWithIntensity*intensity;
+        blueValueCurrent =  (int) blueValueWithIntensity*intensity;
+        #endif
+        #ifdef COMMON_CATHODE
+        redValueCurrent = (int)255 - redValueWithIntensity + 255*(1-intensity);  // Subtrai de 255 para inverter os valores de cor
+       greenValueCurrent = (int)255 - greenValueWithIntensity + 255*(1-intensity);
+        blueValueCurrent = (int)255 - blueValueWithIntensity+255*(1-intensity);
         #endif
     }
 
@@ -49,9 +90,9 @@ public:
     void turnOn() {
       
         // Ligar as cores com base nos valores definidos
-        analogWrite(pinRed, redValue);   // Valor invertido para o hardware
-        analogWrite(pinGreen, greenValue); // Valor invertido para o hardware
-        analogWrite(pinBlue, blueValue);  // Valor invertido para o hardware
+        analogWrite(pinRed, redValueCurrent);   // Valor invertido para o hardware
+        analogWrite(pinGreen, greenValueCurrent); // Valor invertido para o hardware
+        analogWrite(pinBlue, blueValueCurrent);  // Valor invertido para o hardware
     }
 
     // Função para desligar o LED
@@ -109,7 +150,6 @@ public:
 
 
 void blinkSineWave(float freq) {
-    frequency = 100;  // Frequência de 500Hz para o PWM
     period = 1000.0 / frequency; // Período da onda quadrada em milissegundos
 
     unsigned long currentMillis = millis();
@@ -122,12 +162,13 @@ void blinkSineWave(float freq) {
     float dutyCycle = (sineValue + 1.0) / 2.0; 
 
     // Controla o brilho do LED usando o PWM com base no duty cycle gerado pela onda senoidal
-    blinkSquareWaveWithDutyCycle(frequency, dutyCycle);  // Usa o PWM com o duty cycle senoidal
+    setIntensityCurrent(dutyCycle);
+    turnOn();
+
 }
 
 
 void blinkTriangleWave(float freq) {
-    frequency = 100;  // Frequência do PWM
     period = 1000.0 / frequency; // Período da onda quadrada em milissegundos
 
     unsigned long currentMillis = millis();
@@ -146,7 +187,8 @@ void blinkTriangleWave(float freq) {
     }
 
     // Controla o brilho do LED usando o PWM com base no duty cycle gerado pela onda triangular
-    blinkSquareWaveWithDutyCycle(frequency, dutyCycle);  // Usa o PWM com o duty cycle da onda triangular
+    setIntensityCurrent(dutyCycle);
+    turnOn();
 }
 
 
@@ -154,22 +196,23 @@ void blinkTriangleWave(float freq) {
 };
 
 // Instancia o LED com os pinos 2, 3 e 4 fora da classe
-LedRGB led(4,2,35);
+LedRGB led(12,13,14);
 
 void setup() {
-    led.setColor(0,0, 255,0.01); // Define a cor como verde
+    led.setColor(255,255,255); // Define a cor como verde
+    led.setIntensity(1);
 }
 
 void loop() {
     // Escolha o tipo de onda desejada e a frequência de piscagem
     
-    //led.turnOn();
-    //delay(1000);
-    //led.turnOff();
-    //delay(1000);
-   led.blinkSquareWave(2); // Frequência de 1 Hz para onda quadrada
-   //led.blinkTriangleWave(1); // Frequência de 1 Hz para onda triangular
-  //led.blinkSineWave(1); // Frequência de 1 Hz para onda senoidal
+  //led.turnOn();
+  //delay(1000);
+  //led.turnOff();
+  //delay(1000);
+  //led.blinkSquareWave(1); // Frequência de 1 Hz para onda quadrada
+  //led.blinkTriangleWave(1); // Frequência de 1 Hz para onda triangular
+  led.blinkSineWave(1); // Frequência de 1 Hz para onda senoidal
 
 
 }

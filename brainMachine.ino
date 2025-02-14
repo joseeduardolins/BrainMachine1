@@ -1,7 +1,15 @@
+#include "esp_timer.h"
+
+#define SINAL1_ADC 34  // GPIO do primeiro sinal (ADC1_CH6)
+#define SINAL2_ADC 35  // GPIO do segundo sinal (ADC1_CH7)
+#define POT_INTENSITY 32
+#define POT_RGB 33
 
 //#define COMMON_CATHODE
 
 #define COMMON_ANODE
+
+
 
 class LedRGB {
 private:
@@ -198,21 +206,150 @@ void blinkTriangleWave(float freq) {
 // Instancia o LED com os pinos 2, 3 e 4 fora da classe
 LedRGB led(12,13,14);
 
+void lerPotenciometroIntensidade() {
+    int leitura = analogRead(POT_INTENSITY);  
+    led.setIntensity(map(leitura, 0, 4095, 0, 255));
+}
+
+// Função que lê um potenciômetro e gera valores RGB baseados na leitura
+void calcularRGB() {
+    int leitura = analogRead(POT_RGB);
+    int r, b, g = 0;
+    int valor = map(leitura, 0, 4095, 0, 765); // Mapeia de 0-4095 para 0-765 (total de 3 cores somadas)
+
+    if (valor <= 255) {
+        r = 255 - valor; g = valor; b = 0; // De vermelho para verde
+    } else if (valor <= 510) {
+        r = 0; g = 255 - (valor - 255); b = valor - 255; // De verde para azul
+    } else {
+        r = valor - 510; g = 0; b = 255 - (valor - 510); // De azul para vermelho
+    }
+    led.setColor(r,g,b);
+}
+
+void delayMicrosecondsESP(uint32_t us) {
+    esp_rom_delay_us(us);
+}
+
+void delayMillisecondsESP(uint32_t ms) {
+    esp_rom_delay_us(ms * 1000);  // Converte ms para µs
+}
+
+
+volatile float freqSinal1 = 0;
+volatile float freqSinal2 = 0;
+
+void medirFrequencia(void *pvParameters) {
+    static int ultimaLeitura1 = 0, ultimaLeitura2 = 0;
+    static unsigned long ultimoTempo1 = 0, ultimoTempo2 = 0;
+    int leitura1, leitura2;
+    unsigned long tempoAtual;
+    int contador = 0;
+    while (true) {
+        leitura1 = analogRead(SINAL1_ADC);
+        leitura2 = analogRead(SINAL2_ADC);
+        tempoAtual = micros();
+
+        // Normalizando o sinal (ponto médio do ADC como referência)
+        int referenciaADC = 2048;  // 3.3V / 2 ≈ 2048 no ADC de 12 bits
+        bool cruzouZero1 = (ultimaLeitura1 < referenciaADC && leitura1 >= referenciaADC);
+        bool cruzouZero2 = (ultimaLeitura2 < referenciaADC && leitura2 >= referenciaADC);
+
+        // Calcula frequência do Sinal 1
+        if (cruzouZero1) {
+            if (ultimoTempo1 > 0) {
+                freqSinal1 = 1e6 / (tempoAtual - ultimoTempo1);
+            }
+            ultimoTempo1 = tempoAtual;
+        }
+
+        // Calcula frequência do Sinal 2
+        if (cruzouZero2) {
+            if (ultimoTempo2 > 0) {
+                freqSinal2 = 1e6 / (tempoAtual - ultimoTempo2);
+            }
+            ultimoTempo2 = tempoAtual;
+        }
+
+        ultimaLeitura1 = leitura1;
+        ultimaLeitura2 = leitura2;
+
+        esp_rom_delay_us(100); // Delay de 100 µs
+
+        contador++;
+        if (contador >= 10000) { // A cada 10ms (~10000 iterações)
+            vTaskDelay(pdMS_TO_TICKS(1)); // Libera a CPU por 1ms
+            contador = 0;
+        }
+
+    }
+}
+
+
+// Máquina de estados controlada por botão
+#define BOTAO_PIN 25
+volatile int estado = 0;
+
+void IRAM_ATTR mudarEstado() {
+    static unsigned long ultimaPressao = 0;
+    unsigned long tempoAtual = millis();
+    
+    if (tempoAtual - ultimaPressao > 200) {  // Debounce
+        estado = (estado + 1) % 5;
+        ultimaPressao = tempoAtual;
+    }
+}
+
+void maquinaEstados(void *pvParameters) {
+    pinMode(BOTAO_PIN, INPUT_PULLUP);
+    attachInterrupt(BOTAO_PIN, mudarEstado, FALLING);
+
+    while (true) {
+      calcularRGB();
+      lerPotenciometroIntensidade();
+
+        switch (estado) {
+            case 0:
+                Serial.println("Leds desligados.");
+                  led.turnOff();
+                break;
+            case 1:
+                Serial.println("Leds ligados.");
+                led.turnOn();
+                break;
+
+            case 2:
+                Serial.println("Onda senoidal.");
+                led.blinkSineWave(abs(freqSinal1 - freqSinal2)); // Frequência de 1 Hz para onda senoidal
+                break;
+            case 3:
+                Serial.println("Onda quadrada.");
+                led.blinkSquareWave(abs(freqSinal1 - freqSinal2)); // Frequência de 1 Hz para onda quadrada
+                break;
+            case 4:
+                Serial.println("Onda triangular.");
+                led.blinkTriangleWave(abs(freqSinal1 - freqSinal2)); // Frequência de 1 Hz para onda triangular
+                break;
+        }
+
+        Serial.printf("Frequências: Sinal1 = %.2f Hz, Sinal2 = %.2f Hz\n", freqSinal1, freqSinal2);
+        vTaskDelay(pdMS_TO_TICKS(10)); // Libera a CPU por 1ms
+    }
+}
+
+
+
+
+
+
 void setup() {
-    led.setColor(255,255,255); // Define a cor como verde
-    led.setIntensity(1);
+  Serial.begin(115200);
+  led.setColor(255,255,255); // Define a cor como verde
+  led.setIntensity(1);
+  xTaskCreatePinnedToCore(medirFrequencia, "LeituraFreq", 4096, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(maquinaEstados, "MaquinaEstados", 2048, NULL, 1, NULL, 1);
 }
 
 void loop() {
     // Escolha o tipo de onda desejada e a frequência de piscagem
-    
-  //led.turnOn();
-  //delay(1000);
-  //led.turnOff();
-  //delay(1000);
-  //led.blinkSquareWave(1); // Frequência de 1 Hz para onda quadrada
-  //led.blinkTriangleWave(1); // Frequência de 1 Hz para onda triangular
-  led.blinkSineWave(1); // Frequência de 1 Hz para onda senoidal
-
-
-}
+    }

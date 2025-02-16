@@ -4,10 +4,12 @@
 #define SINAL2_ADC 35  // GPIO do segundo sinal (ADC1_CH7)
 #define POT_INTENSITY 32
 #define POT_RGB 33
+#define BOTAO_PIN 25
 
-//#define COMMON_CATHODE
 
-#define COMMON_ANODE
+#define COMMON_CATHODE
+
+//#define COMMON_ANODE
 
 
 
@@ -38,13 +40,13 @@ public:
         greenValue = 0;
         blueValue = 0;
 
-        redValueCurrent = 255;
-        greenValueCurrent = 255;
-        blueValueCurrent = 255;
+        redValueCurrent = 0;
+        greenValueCurrent = 0;
+        blueValueCurrent = 0;
 
-        redValueWithIntensity = 255;
-        greenValueWithIntensity = 255;
-        blueValueWithIntensity = 255;
+        redValueWithIntensity = 0;
+        greenValueWithIntensity = 0;
+        blueValueWithIntensity = 0;
 
         previousMillis = 0;
         ledState = false;
@@ -52,16 +54,22 @@ public:
 
     // Função para definir a cor (valores de 0 a 255)
     void setColor(int r, int g, int b) {
+      /*
       #ifdef COMMON_ANODE
-        redValue =  (int)r;  // Subtrai de 255 para inverter os valores de cor
+        redValue =  (int)r;  //  valores de cor
         greenValue =  (int)g;
         blueValue =  (int)b;
         #endif
         #ifdef COMMON_CATHODE
         redValue = (int)255 - r ;  // Subtrai de 255 para inverter os valores de cor
-       greenValue = (int)255 - g ;
+        greenValue = (int)255 - g ;
         blueValue = (int)255 - b ;
         #endif
+        */
+        redValue =  (int)r;  //  valores de cor
+        greenValue =  (int)g;
+        blueValue =  (int)b;
+
     }
 
     //Configura intensidade dos leds 
@@ -73,9 +81,9 @@ public:
         blueValueWithIntensity =  (int) blueValue*intensity;
         #endif
         #ifdef COMMON_CATHODE
-        redValueWithIntensity = (int)255 - redValue + 255*(1-intensity);  // Subtrai de 255 para inverter os valores de cor
-       greenValueWithIntensity = (int)255 - greenValue + 255*(1-intensity);
-        blueValueWithIntensity = (int)255 - blueValue+255*(1-intensity);
+        redValueWithIntensity = (int)(255-redValue*intensity);  // Subtrai de 255 para inverter os valores de cor
+        greenValueWithIntensity = (int)( 255-greenValue*intensity);
+        blueValueWithIntensity = (int)(255-blueValue*intensity);
         #endif
     }
 
@@ -88,9 +96,9 @@ public:
         blueValueCurrent =  (int) blueValueWithIntensity*intensity;
         #endif
         #ifdef COMMON_CATHODE
-        redValueCurrent = (int)255 - redValueWithIntensity + 255*(1-intensity);  // Subtrai de 255 para inverter os valores de cor
-       greenValueCurrent = (int)255 - greenValueWithIntensity + 255*(1-intensity);
-        blueValueCurrent = (int)255 - blueValueWithIntensity+255*(1-intensity);
+        redValueCurrent = (int)( 255-(redValueWithIntensity-255)*(-1)*intensity);  // Subtrai de 255 para inverter os valores de cor
+       greenValueCurrent = (int)(255- (greenValueWithIntensity-255)*(-1)*intensity);
+        blueValueCurrent = (int)( 255- (blueValueWithIntensity-255)*(-1)*intensity);
         #endif
     }
 
@@ -112,9 +120,9 @@ public:
         analogWrite(pinBlue, LOW);
         #endif
         #ifdef COMMON_CATHODE
-        digitalWrite(pinRed, HIGH);
-        digitalWrite(pinGreen, HIGH);
-        digitalWrite(pinBlue, HIGH);
+        analogWrite(pinRed, 255);
+        analogWrite(pinGreen, 255);
+        analogWrite(pinBlue, 255);
         #endif
     }
 	void blinkSquareWaveWithDutyCycle(float freq, float dutyCycle) {
@@ -144,6 +152,7 @@ public:
         period = 1000.0 / frequency; // Período da onda em milissegundos
         interval = period / 2; // O tempo de "on" e "off" é metade do período
         unsigned long currentMillis = millis();
+        setIntensityCurrent(1);
 
         if (currentMillis - previousMillis >= interval) {
             previousMillis = currentMillis;
@@ -204,36 +213,74 @@ void blinkTriangleWave(float freq) {
 };
 
 // Instancia o LED com os pinos 2, 3 e 4 fora da classe
-LedRGB led(12,13,14);
+LedRGB led(14,12,13);
+/*
+void lerPotenciometroIntensidade() {
+    delayMicroseconds(100);  // Pequeno atraso antes da leitura
+    int leitura = analogRead(POT_INTENSITY); 
+    Serial.printf("PotInt = %f\n",round(leitura / 4095.0 * 10) / 10.0);
+    led.setIntensity(round(leitura / 4095.0 * 10) / 10.0);
+
+}*/
 
 void lerPotenciometroIntensidade() {
-    int leitura = analogRead(POT_INTENSITY);  
-    led.setIntensity(map(leitura, 0, 4095, 0, 255));
+    static float ultimoValor = 0.0;  // Mantém o último valor válido
+    
+    float leitura = analogRead(POT_INTENSITY);
+    float intensidade = round(leitura / 4095.0 * 100) / 100.0;
+
+    if (intensidade < 0.01 ) { // Se a leitura real for >10, não deveria ser 0
+        intensidade = ultimoValor;  // Mantém o último valor válido
+    } else {
+        ultimoValor = intensidade;  // Atualiza o último valor
+    }
+
+    Serial.printf("PotInt = %.1f\n", intensidade);
+    led.setIntensity(intensidade);
 }
 
 // Função que lê um potenciômetro e gera valores RGB baseados na leitura
 void calcularRGB() {
+    static int ultimoValor = 0;  // Mantém o último valor válido
     int leitura = analogRead(POT_RGB);
-    int r, b, g = 0;
-    int valor = map(leitura, 0, 4095, 0, 765); // Mapeia de 0-4095 para 0-765 (total de 3 cores somadas)
+
+    Serial.printf("PotRGB = %d\n", leitura);
+
+    // Mapeia de 0-4095 para 0-765 (total de transição RGB)
+    int valor = map(leitura, 0, 4095, 0, 765);
+
+    // Se a leitura for muito baixa, mantém o último valor válido (evita glitches)
+    if (leitura < 5) { 
+        valor = ultimoValor;
+    } else {
+        ultimoValor = valor; // Atualiza o último valor
+    }
+
+    int r = 0, g = 0, b = 0;
 
     if (valor <= 255) {
-        r = 255 - valor; g = valor; b = 0; // De vermelho para verde
+        r = 255 - valor;  
+        g = valor;  
+        b = 0;  // Vermelho → Verde
     } else if (valor <= 510) {
-        r = 0; g = 255 - (valor - 255); b = valor - 255; // De verde para azul
+        r = 0;  
+        g = 255 - (valor - 255);  
+        b = (valor - 255);  // Verde → Azul
     } else {
-        r = valor - 510; g = 0; b = 255 - (valor - 510); // De azul para vermelho
+        r = (valor - 510);  
+        g = 0;  
+        b = 255 - (valor - 510);  // Azul → Vermelho
     }
-    led.setColor(r,g,b);
+
+    // Garantia de que os valores de cor não ultrapassem 0-255
+    r = constrain(r, 0, 255);
+    g = constrain(g, 0, 255);
+    b = constrain(b, 0, 255);
+
+    Serial.printf("RGB: R=%d, G=%d, B=%d\n", r, g, b);
+    led.setColor(r, g, b);
 }
 
-void delayMicrosecondsESP(uint32_t us) {
-    esp_rom_delay_us(us);
-}
-
-void delayMillisecondsESP(uint32_t ms) {
-    esp_rom_delay_us(ms * 1000);  // Converte ms para µs
-}
 
 
 volatile float freqSinal1 = 0;
@@ -287,7 +334,6 @@ void medirFrequencia(void *pvParameters) {
 
 
 // Máquina de estados controlada por botão
-#define BOTAO_PIN 25
 volatile int estado = 0;
 
 void IRAM_ATTR mudarEstado() {
@@ -303,10 +349,22 @@ void IRAM_ATTR mudarEstado() {
 void maquinaEstados(void *pvParameters) {
     pinMode(BOTAO_PIN, INPUT_PULLUP);
     attachInterrupt(BOTAO_PIN, mudarEstado, FALLING);
+    int tempoParaMedirPot = 0;
+    float freqPulse = 0.0;
 
     while (true) {
+      
+      if((millis() - tempoParaMedirPot)>50)
+      {
       calcularRGB();
       lerPotenciometroIntensidade();
+      tempoParaMedirPot = millis();
+      }
+
+
+      //freqPulse = abs(freqSinal1 - freqSinal2);
+      freqPulse = 1;
+      
 
         switch (estado) {
             case 0:
@@ -314,21 +372,23 @@ void maquinaEstados(void *pvParameters) {
                   led.turnOff();
                 break;
             case 1:
+
                 Serial.println("Leds ligados.");
+                led.setIntensityCurrent(1);
                 led.turnOn();
                 break;
 
             case 2:
                 Serial.println("Onda senoidal.");
-                led.blinkSineWave(abs(freqSinal1 - freqSinal2)); // Frequência de 1 Hz para onda senoidal
+                led.blinkSineWave(abs(freqPulse)); // Frequência de 1 Hz para onda senoidal
                 break;
             case 3:
                 Serial.println("Onda quadrada.");
-                led.blinkSquareWave(abs(freqSinal1 - freqSinal2)); // Frequência de 1 Hz para onda quadrada
+                led.blinkSquareWave(abs(freqPulse)); // Frequência de 1 Hz para onda quadrada
                 break;
             case 4:
                 Serial.println("Onda triangular.");
-                led.blinkTriangleWave(abs(freqSinal1 - freqSinal2)); // Frequência de 1 Hz para onda triangular
+                led.blinkTriangleWave(abs(freqPulse)); // Frequência de 1 Hz para onda triangular
                 break;
         }
 
@@ -344,12 +404,12 @@ void maquinaEstados(void *pvParameters) {
 
 void setup() {
   Serial.begin(115200);
-  led.setColor(255,255,255); // Define a cor como verde
+  led.setColor(255,255,255); // Define a cor
   led.setIntensity(1);
   xTaskCreatePinnedToCore(medirFrequencia, "LeituraFreq", 4096, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(maquinaEstados, "MaquinaEstados", 2048, NULL, 1, NULL, 1);
 }
 
 void loop() {
-    // Escolha o tipo de onda desejada e a frequência de piscagem
+
     }

@@ -250,7 +250,7 @@ void calcularRGB() {
     int valor = map(leitura, 0, 4095, 0, 765);
 
     // Se a leitura for muito baixa, mantém o último valor válido (evita glitches)
-    if (leitura < 5) { 
+    if (leitura < 1) { 
         valor = ultimoValor;
     } else {
         ultimoValor = valor; // Atualiza o último valor
@@ -280,40 +280,54 @@ void calcularRGB() {
     Serial.printf("RGB: R=%d, G=%d, B=%d\n", r, g, b);
     led.setColor(r, g, b);
 }
-
-
-
 volatile float freqSinal1 = 0;
 volatile float freqSinal2 = 0;
 
 void medirFrequencia(void *pvParameters) {
-    static int ultimaLeitura1 = 0, ultimaLeitura2 = 0;
-    static unsigned long ultimoTempo1 = 0, ultimoTempo2 = 0;
+    const unsigned long intervaloAmostragem = 1000000; // 0,1 segundo em microssegundos
+    const int numAmostrasRef = 500;  // Número de amostras para calcular referência dinâmica
+    unsigned long tempoInicio = micros();
+    unsigned long somaPeriodos1 = 0, somaPeriodos2 = 0;
+    int contagens1 = 0, contagens2 = 0;
     int leitura1, leitura2;
-    unsigned long tempoAtual;
-    int contador = 0;
+    unsigned long ultimoTempo1 = 0, ultimoTempo2 = 0;
+    int somaReferencia1 = 0, somaReferencia2 = 0;
+    int referenciaADC1 = 2048, referenciaADC2 = 2048; // Inicialmente no meio do ADC
+        int ultimaLeitura1 = 2048, ultimaLeitura2 = 2048; // Inicializando no meio do ADC
+int contador =0;
+
+    // Coletar primeiras leituras para referência inicial
+    for (int i = 0; i < numAmostrasRef; i++) {
+        somaReferencia1 += analogRead(SINAL1_ADC);
+        somaReferencia2 += analogRead(SINAL2_ADC);
+        esp_rom_delay_us(100);
+    }
+    referenciaADC1 = somaReferencia1 / numAmostrasRef;
+    referenciaADC2 = somaReferencia2 / numAmostrasRef;
+
     while (true) {
         leitura1 = analogRead(SINAL1_ADC);
         leitura2 = analogRead(SINAL2_ADC);
-        tempoAtual = micros();
+        unsigned long tempoAtual = micros();
 
-        // Normalizando o sinal (ponto médio do ADC como referência)
-        int referenciaADC = 2048;  // 3.3V / 2 ≈ 2048 no ADC de 12 bits
-        bool cruzouZero1 = (ultimaLeitura1 < referenciaADC && leitura1 >= referenciaADC);
-        bool cruzouZero2 = (ultimaLeitura2 < referenciaADC && leitura2 >= referenciaADC);
+        // Atualiza referência dinamicamente
+        referenciaADC1 = (referenciaADC1 * 0.9) + (leitura1 * 0.1); // Suaviza a referência
+        referenciaADC2 = (referenciaADC2 * 0.9) + (leitura2 * 0.1);
 
-        // Calcula frequência do Sinal 1
-        if (cruzouZero1) {
-            if (ultimoTempo1 > 0) {
-                freqSinal1 = 1e6 / (tempoAtual - ultimoTempo1);
+        // Verifica cruzamento por zero para o Sinal 1
+        if (leitura1 >= referenciaADC1 && leitura1 > ultimaLeitura1) { 
+            if (ultimoTempo1 != 0) {
+                somaPeriodos1 += (tempoAtual - ultimoTempo1);
+                contagens1++;
             }
             ultimoTempo1 = tempoAtual;
         }
 
-        // Calcula frequência do Sinal 2
-        if (cruzouZero2) {
-            if (ultimoTempo2 > 0) {
-                freqSinal2 = 1e6 / (tempoAtual - ultimoTempo2);
+        // Verifica cruzamento por zero para o Sinal 2
+        if (leitura2 >= referenciaADC2 && leitura2 > ultimaLeitura2) {
+            if (ultimoTempo2 != 0) {
+                somaPeriodos2 += (tempoAtual - ultimoTempo2);
+                contagens2++;
             }
             ultimoTempo2 = tempoAtual;
         }
@@ -321,17 +335,38 @@ void medirFrequencia(void *pvParameters) {
         ultimaLeitura1 = leitura1;
         ultimaLeitura2 = leitura2;
 
-        esp_rom_delay_us(100); // Delay de 100 µs
+        // Verifica se o período de amostragem de 0,1 segundo foi atingido
+        if (tempoAtual - tempoInicio >= intervaloAmostragem) {
+            // Calcula as frequências médias
+            if (contagens1 > 0 && somaPeriodos1 > 0) {
+                freqSinal1 = (contagens1 * 1e6) / somaPeriodos1;
+            } else {
+                freqSinal1 = 0;
+            }
 
-        contador++;
+            if (contagens2 > 0 && somaPeriodos2 > 0) {
+                freqSinal2 = (contagens2 * 1e6) / somaPeriodos2;
+            } else {
+                freqSinal2 = 0;
+            }
+
+            // Reinicia os contadores e soma de períodos
+            somaPeriodos1 = 0;
+            somaPeriodos2 = 0;
+            contagens1 = 0;
+            contagens2 = 0;
+            tempoInicio = tempoAtual;
+
+
+        }
+
+                contador++;
         if (contador >= 10000) { // A cada 10ms (~10000 iterações)
             vTaskDelay(pdMS_TO_TICKS(1)); // Libera a CPU por 1ms
             contador = 0;
         }
-
     }
 }
-
 
 // Máquina de estados controlada por botão
 volatile int estado = 0;
@@ -362,8 +397,17 @@ void maquinaEstados(void *pvParameters) {
       }
 
 
-      //freqPulse = abs(freqSinal1 - freqSinal2);
-      freqPulse = 1;
+
+      freqPulse = abs(freqSinal1 - freqSinal2);
+                        // Exibe as frequências calculadas
+            Serial.print("Frequência Sinal 1: ");
+            Serial.print(freqSinal1);
+            Serial.print(" Hz, Frequência Sinal 2: ");
+            Serial.print(freqSinal2);
+            Serial.println(" Hz");
+            Serial.print("dif");
+            Serial.println(freqPulse);
+      //freqPulse = 1;
       
 
         switch (estado) {

@@ -1,7 +1,9 @@
 #include "esp_timer.h"
+#include "driver/timer.h"
 
-#define SINAL1_ADC 34  // GPIO do primeiro sinal (ADC1_CH6)
-#define SINAL2_ADC 35  // GPIO do segundo sinal (ADC1_CH7)
+
+#define SINAL1_ADC 5  // GPIO do primeiro sinal (ADC1_CH6)
+#define SINAL2_ADC 18  // GPIO do segundo sinal (ADC1_CH7)
 #define POT_INTENSITY 32
 #define POT_RGB 33
 #define BOTAO_PIN 25
@@ -280,93 +282,37 @@ void calcularRGB() {
     Serial.printf("RGB: R=%d, G=%d, B=%d\n", r, g, b);
     led.setColor(r, g, b);
 }
+
+volatile unsigned long ultimoTempo1 = 0;
+volatile unsigned long ultimoTempo2 = 0;
+volatile unsigned long periodo1 = 0;
+volatile unsigned long periodo2 = 0;
 volatile float freqSinal1 = 0;
 volatile float freqSinal2 = 0;
 
-void medirFrequencia(void *pvParameters) {
-    const unsigned long intervaloAmostragem = 1000000; // 0,1 segundo em microssegundos
-    const int numAmostrasRef = 500;  // Número de amostras para calcular referência dinâmica
-    unsigned long tempoInicio = micros();
-    unsigned long somaPeriodos1 = 0, somaPeriodos2 = 0;
-    int contagens1 = 0, contagens2 = 0;
-    int leitura1, leitura2;
-    unsigned long ultimoTempo1 = 0, ultimoTempo2 = 0;
-    int somaReferencia1 = 0, somaReferencia2 = 0;
-    int referenciaADC1 = 2048, referenciaADC2 = 2048; // Inicialmente no meio do ADC
-        int ultimaLeitura1 = 2048, ultimaLeitura2 = 2048; // Inicializando no meio do ADC
-int contador =0;
-
-    // Coletar primeiras leituras para referência inicial
-    for (int i = 0; i < numAmostrasRef; i++) {
-        somaReferencia1 += analogRead(SINAL1_ADC);
-        somaReferencia2 += analogRead(SINAL2_ADC);
-        esp_rom_delay_us(100);
+// Interrupção para o primeiro sinal
+void IRAM_ATTR medirFrequencia1() {
+    unsigned long tempoAgora = micros();
+    if (ultimoTempo1 != 0) {
+        periodo1 = tempoAgora - ultimoTempo1;
+        freqSinal1 = 1e6 / (float)periodo1; // Frequência em Hz
+        Serial.println(freqSinal1);
     }
-    referenciaADC1 = somaReferencia1 / numAmostrasRef;
-    referenciaADC2 = somaReferencia2 / numAmostrasRef;
-
-    while (true) {
-        leitura1 = analogRead(SINAL1_ADC);
-        leitura2 = analogRead(SINAL2_ADC);
-        unsigned long tempoAtual = micros();
-
-        // Atualiza referência dinamicamente
-        referenciaADC1 = (referenciaADC1 * 0.9) + (leitura1 * 0.1); // Suaviza a referência
-        referenciaADC2 = (referenciaADC2 * 0.9) + (leitura2 * 0.1);
-
-        // Verifica cruzamento por zero para o Sinal 1
-        if (leitura1 >= referenciaADC1 && leitura1 > ultimaLeitura1) { 
-            if (ultimoTempo1 != 0) {
-                somaPeriodos1 += (tempoAtual - ultimoTempo1);
-                contagens1++;
-            }
-            ultimoTempo1 = tempoAtual;
-        }
-
-        // Verifica cruzamento por zero para o Sinal 2
-        if (leitura2 >= referenciaADC2 && leitura2 > ultimaLeitura2) {
-            if (ultimoTempo2 != 0) {
-                somaPeriodos2 += (tempoAtual - ultimoTempo2);
-                contagens2++;
-            }
-            ultimoTempo2 = tempoAtual;
-        }
-
-        ultimaLeitura1 = leitura1;
-        ultimaLeitura2 = leitura2;
-
-        // Verifica se o período de amostragem de 0,1 segundo foi atingido
-        if (tempoAtual - tempoInicio >= intervaloAmostragem) {
-            // Calcula as frequências médias
-            if (contagens1 > 0 && somaPeriodos1 > 0) {
-                freqSinal1 = (contagens1 * 1e6) / somaPeriodos1;
-            } else {
-                freqSinal1 = 0;
-            }
-
-            if (contagens2 > 0 && somaPeriodos2 > 0) {
-                freqSinal2 = (contagens2 * 1e6) / somaPeriodos2;
-            } else {
-                freqSinal2 = 0;
-            }
-
-            // Reinicia os contadores e soma de períodos
-            somaPeriodos1 = 0;
-            somaPeriodos2 = 0;
-            contagens1 = 0;
-            contagens2 = 0;
-            tempoInicio = tempoAtual;
-
-
-        }
-
-                contador++;
-        if (contador >= 10000) { // A cada 10ms (~10000 iterações)
-            vTaskDelay(pdMS_TO_TICKS(1)); // Libera a CPU por 1ms
-            contador = 0;
-        }
-    }
+    ultimoTempo1 = tempoAgora;
 }
+
+// Interrupção para o segundo sinal
+void IRAM_ATTR medirFrequencia2() {
+    unsigned long tempoAgora = micros();
+    if (ultimoTempo2 != 0) {
+        periodo2 = tempoAgora - ultimoTempo2;
+        freqSinal2 = 1e6 / (float)periodo2; // Frequência em Hz
+        Serial.println(freqSinal2);
+    }
+    ultimoTempo2 = tempoAgora;
+}
+
+
 
 // Máquina de estados controlada por botão
 volatile int estado = 0;
@@ -382,11 +328,12 @@ void IRAM_ATTR mudarEstado() {
 }
 
 void maquinaEstados(void *pvParameters) {
-    pinMode(BOTAO_PIN, INPUT_PULLUP);
-    attachInterrupt(BOTAO_PIN, mudarEstado, FALLING);
+
     int tempoParaMedirPot = 0;
     float freqPulse = 0.0;
-
+    attachInterrupt(BOTAO_PIN, mudarEstado, FALLING);
+   // attachInterrupt(SINAL1_ADC, medirFrequencia1, RISING);
+   // attachInterrupt(SINAL2_ADC, medirFrequencia2, RISING);
     while (true) {
       
       if((millis() - tempoParaMedirPot)>50)
@@ -397,18 +344,8 @@ void maquinaEstados(void *pvParameters) {
       }
 
 
+      freqPulse = 1.0;
 
-      freqPulse = abs(freqSinal1 - freqSinal2);
-                        // Exibe as frequências calculadas
-            Serial.print("Frequência Sinal 1: ");
-            Serial.print(freqSinal1);
-            Serial.print(" Hz, Frequência Sinal 2: ");
-            Serial.print(freqSinal2);
-            Serial.println(" Hz");
-            Serial.print("dif");
-            Serial.println(freqPulse);
-      //freqPulse = 1;
-      
 
         switch (estado) {
             case 0:
@@ -436,7 +373,6 @@ void maquinaEstados(void *pvParameters) {
                 break;
         }
 
-        Serial.printf("Frequências: Sinal1 = %.2f Hz, Sinal2 = %.2f Hz\n", freqSinal1, freqSinal2);
         vTaskDelay(pdMS_TO_TICKS(10)); // Libera a CPU por 1ms
     }
 }
@@ -450,8 +386,14 @@ void setup() {
   Serial.begin(115200);
   led.setColor(255,255,255); // Define a cor
   led.setIntensity(1);
-  xTaskCreatePinnedToCore(medirFrequencia, "LeituraFreq", 4096, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(maquinaEstados, "MaquinaEstados", 2048, NULL, 1, NULL, 1);
+  pinMode(SINAL1_ADC,  INPUT);
+  pinMode(SINAL2_ADC,  INPUT);
+  pinMode(BOTAO_PIN, INPUT_PULLUP);
+
+  // Configura interrupções para borda de subida                                 
+
+  //xTaskCreatePinnedToCore(medirFrequencia, "LeituraFreq", 4096, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(maquinaEstados, "MaquinaEstados", 4096, NULL, 1, NULL, 0);
 }
 
 void loop() {
